@@ -1,0 +1,304 @@
+using Avalonia.Platform;
+
+namespace FsCopilot.Simulation;
+
+using System.Collections;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Text.RegularExpressions;
+using Jint;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
+
+public class Definitions : IReadOnlyCollection<Definition>
+{
+    private static readonly IDeserializer Deserializer = new DeserializerBuilder()
+        .WithObjectFactory(type =>
+        {
+            if (type == typeof(Config)) return new Config();
+            if (type == typeof(Config.Link)) return new Config.Link();
+            return Activator.CreateInstance(type)!;
+        })
+        .WithNamingConvention(UnderscoredNamingConvention.Instance)
+        // .IgnoreUnmatchedProperties()
+        .Build();
+
+    private static readonly Regex UpdatedRx =
+        new(@"^\s*#\s*Updated:\s*(?<date>.+?)\s*$",
+            RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+    private readonly Definition[] _links;
+
+
+    public string Name { get; }
+    public DateTime UpdatedAt { get; }
+    public string[] Ignore { get; }
+
+    private Definitions(string name, DateTime updatedAt, Definition[] links, string[] ignore)
+    {
+        Name = name;
+        UpdatedAt = updatedAt;
+        _links = links;
+        Ignore = ignore;
+    }
+
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.NonPublicConstructors, typeof(Config))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.NonPublicConstructors, typeof(Config.Link))]
+    private static Config? ParseConfig(string yaml) => Deserializer.Deserialize<Config?>(yaml);
+
+    public static bool TryLoadTree(string path, out DefinitionNode node)
+    {
+        Config? cfg;
+        try
+        {
+            var cfgFile = File.ReadAllText(Path.Combine([AppContext.BaseDirectory, "Definitions", ..path.Split('/')])).Trim();
+            if (string.IsNullOrWhiteSpace(cfgFile))
+            {
+                node = DefinitionNode.Empty;
+                return true;
+            }
+            cfg = ParseConfig(cfgFile);
+            if (cfg == null)
+            {
+                node = DefinitionNode.Empty;
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            Log.Information("[Definitions] Failed to load {Module} configuration", path);
+            node = DefinitionNode.Empty;
+            return false;
+        }
+        catch (Exception e)
+        {
+            Log.Error(e, "[Definitions] Failed to load {Module} configuration", path);
+            node = DefinitionNode.Empty;
+            return false;
+        }
+
+        var master = (cfg.Master ?? [])
+            .Where(m => !string.IsNullOrWhiteSpace(m.Get))
+            .Select(m => new Definition(false, m.Get, m.Set, m.Skp)).ToArray();
+        var shared = (cfg.Shared ?? [])
+            .Where(m => !string.IsNullOrWhiteSpace(m.Get))
+            .Select(m => new Definition(true, m.Get, m.Set, m.Skp)).ToArray();
+        var ignore = (cfg.Ignore ?? []).Where(i => !string.IsNullOrWhiteSpace(i)).Select(i => i.Trim()).ToArray();
+        node = new(path, (cfg.Include ?? [])
+            .Select(i =>
+            {
+                var loaded = TryLoadTree(i, out var child);
+                return (loaded, child);
+            })
+            .Where(def => def.loaded)
+            .Select(def => def.child)
+            .ToArray(), master, shared, ignore);
+        return true;
+    }
+
+    public static Definitions Load(string name)
+    {
+        var cfgFile = LoadModule($"{name}.yaml") ?? string.Empty;
+        if (!TryLoadTree($"{name}.yaml", out var node)) return new(name, DateTime.MinValue, [], []);
+        var master = new List<Definition>();
+        var shared = new List<Definition>();
+        var ignore = new List<string>();
+        Collect(node, master, shared, ignore);
+        var simVars = master.Concat(shared).ToArray();
+        return new(name, TryReadUpdatedUtc(cfgFile) ?? DateTime.MinValue, simVars, ignore.ToArray());
+    }
+
+    private static string? LoadModule(string path)
+    {
+        try
+        {
+            return File.ReadAllText(Path.Combine([AppContext.BaseDirectory, "Definitions", ..path.Split('/')])).Trim();
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            Log.Information("[Definitions] Failed to load {Module} configuration", path);
+            return null;
+        }
+        catch (Exception e)
+        {
+            Log.Error(e, "[Definitions] Failed to load {Module} configuration", path);
+            return null;
+        }
+    }
+
+    private static void Collect(DefinitionNode node, List<Definition> master, List<Definition> shared, List<string> ignore)
+    {
+        foreach (var child in node.Include) Collect(child, master, shared, ignore);
+        master.AddRange(node.Master);
+        shared.AddRange(node.Shared);
+        ignore.AddRange(node.Ignore);
+    }
+
+    private static DateTime? TryReadUpdatedUtc(string cfgFile)
+    {
+        var m = UpdatedRx.Match(cfgFile);
+        if (!m.Success) return null;
+
+        var raw = m.Groups["date"].Value.Trim();
+
+        // ISO format
+        if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt))
+            return dt;
+
+        // yyyy-MM-dd HH:mm:ss format
+        if (DateTime.TryParseExact(raw, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out dt))
+            return dt;
+
+        return null;
+    }
+
+    public static Definitions Save(string name, byte[] file)
+    {
+        try
+        {
+            var definitionsPath = Path.Combine([AppContext.BaseDirectory, "Definitions"]);
+            if (!Directory.Exists(definitionsPath))
+                Directory.CreateDirectory(definitionsPath);
+            File.WriteAllBytes(Path.Combine([AppContext.BaseDirectory, "Definitions", $"{name}.yaml"]), file);
+        }
+        catch (Exception e)
+        {
+            Log.Error(e, "[Definitions] Failed to save {Module} configuration", name);
+        }
+        return Load(name);
+    }
+
+    public Definitions Filter(Func<Definition, bool> predicate) =>
+        new(Name, UpdatedAt, _links.Where(predicate).ToArray(), Ignore.ToArray());
+
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties
+                                | DynamicallyAccessedMemberTypes.NonPublicConstructors)]
+    private class Config
+    {
+        [YamlMember(Alias = "include")]
+        public string[]? Include { get; set; } = [];
+        [YamlMember(Alias = "shared")]
+        public Link[]? Shared { get; set; } = [];
+        [YamlMember(Alias = "master")]
+        public Link[]? Master { get; set; } = [];
+        [YamlMember(Alias = "ignore")]
+        public string[]? Ignore { get; set; } = [];
+
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
+        public class Link
+        {
+            [YamlMember(Alias = "get")]
+            public string Get { get; set; } = string.Empty;
+            [YamlMember(Alias = "set")]
+            public string? Set { get; set; }
+            [YamlMember(Alias = "skp")]
+            public string? Skp { get; set; }
+        }
+    }
+
+    public IEnumerator<Definition> GetEnumerator() => _links.AsReadOnly().GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public int Count => _links.Length;
+}
+
+public record DefinitionNode(
+    string Path,
+    DefinitionNode[] Include,
+    Definition[] Master,
+    Definition[] Shared,
+    string[] Ignore)
+{
+    public static readonly DefinitionNode Empty = new(string.Empty, [], [], [], []);
+}
+
+public partial class Definition
+{
+    [GeneratedRegex(@"^(?<args>.*?)\s*\(\>\s*(?<name>[^,\)]+)\s*(?:,\s*(?<units>[^\)]+))?\s*\)$", RegexOptions.CultureInvariant)]
+    private static partial Regex SetRegex();
+    
+    private readonly string? _set;
+    public bool Shared { get; init; }
+    public string Get { get; init; }
+    public string Units { get; init; }
+    public string? Skip { get; init; }
+
+    public Definition(bool shared, string get, string? set, string? skp)
+    {
+        Shared = shared;
+        var parts = get.Split(',');
+        Get = parts[0].Trim();
+        Units = parts.Length > 1 
+            ? parts[1].Trim() 
+            : Get.Length > 0 && (Get[0] == 'K' || Get[0] == 'H')
+                ? string.Empty 
+                : "Number";
+        _set = set?.Trim();
+        Skip = skp?.Trim();
+    }
+
+    public string Set(object value, object current)
+    {
+        var valueStr = Convert.ToString(value, CultureInfo.InvariantCulture);
+        // current = Math.Round(Convert.ToDouble(current), 15);
+        // value = Math.Round(Convert.ToDouble(value), 15);
+        // if (_set == null) return $"{Convert.ToDouble(value).ToString("G15", CultureInfo.InvariantCulture)} (>{Get})";
+        if (_set == null) return !string.IsNullOrWhiteSpace(Units) ? $"{valueStr} (>{Get}, {Units})" : $"{valueStr} (>{Get})";
+        
+        // var set = _set;
+        if (_set.IndexOfAny(['\'', '`', '?', '{', '}'])  >= 0)
+        {
+            try
+            {
+                var engine = new Engine().SetValue("value", value).SetValue("current", current);
+                return engine.Evaluate(_set).AsString();
+            }
+            catch (Exception e)
+            {
+                Log.Error(e, "[Definitions] Unable to parse event expression {Name}", _set);
+                return string.Empty;
+            }
+        }
+        
+        if (_set.StartsWith('(')) return $"{valueStr} {_set}";
+
+        return _set;
+    }
+
+    public string ParseSet(object value, object current, out string sUnits, out object[] values)
+    {
+        var exp = Set(value, current);
+
+        var m = SetRegex().Match(exp);
+        if (!m.Success)
+        {
+            sUnits = Units;
+            values = [value];
+            return Get;
+        }
+
+        var set = m.Groups["name"].Value.Trim();
+        sUnits = m.Groups["units"].Value.Trim();
+        values = m.Groups["args"].Value
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .Select(ParseParam)
+            .Reverse()
+            .ToArray();
+        if (values.Length == 0) values = [value];
+        
+        if (set.Length > 2 && set[0] == 'K' && set[1] == ':' && set[3] == ':')
+            set = $"K:{set[4..]}";
+        
+        return set;
+        
+        object ParseParam(string p) => uint.TryParse(p, out var ui)
+            ? ui
+            : int.TryParse(p, out var i)
+                ? i
+                : double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
+                    ? d
+                    : 0;
+    }
+}

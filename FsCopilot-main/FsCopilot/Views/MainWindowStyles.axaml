@@ -1,0 +1,359 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Design.PreviewWith>
+        <Border Padding="20">
+            <!-- Add Controls for Previewer Here -->
+        </Border>
+    </Design.PreviewWith>
+
+    <Style Selector="SelectableTextBlock">
+        <Setter Property="SelectionBrush" Value="Gray" />
+        <Setter Property="SelectionForegroundBrush" Value="#8ec6ff" />
+        <Setter Property="FontFamily" Value="Courier New"></Setter>
+    </Style>
+
+    <Style Selector="Grid.Wrapper">
+        <Setter Property="Margin" Value="10, 40, 10, 10"></Setter>
+        <Setter Property="RowSpacing" Value="10"></Setter>
+    </Style>
+
+    <Style Selector="Border.Card">
+        <Setter Property="Background" Value="#7F000000"></Setter>
+        <Setter Property="CornerRadius" Value="10"></Setter>
+        <Setter Property="ClipToBounds" Value="True"></Setter>
+        <Setter Property="Padding" Value="20"></Setter>
+    </Style>
+
+    <Style Selector="PathIcon.CardTitle">
+        <Setter Property="Foreground" Value="#8ec6ff"></Setter>
+        <Setter Property="Width" Value="15"></Setter>
+        <Setter Property="Height" Value="15"></Setter>
+        <Setter Property="Margin" Value="0,0,10,0"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.CardTitle">
+        <Setter Property="Foreground" Value="AliceBlue"></Setter>
+        <Setter Property="FontWeight" Value="Bold"></Setter>
+        <Setter Property="FontSize" Value="16"></Setter>
+        <Setter Property="VerticalAlignment" Value="Center"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.Name">
+        <Setter Property="VerticalAlignment" Value="Center"></Setter>
+        <Setter Property="FontSize" Value="20"></Setter>
+        <Setter Property="Foreground" Value="White"></Setter>
+        <Setter Property="HorizontalAlignment" Value="Right"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.Version">
+        <Setter Property="HorizontalAlignment" Value="Right"></Setter>
+        <Setter Property="FontSize" Value="11"></Setter>
+        <Setter Property="Foreground" Value="Gray"></Setter>
+    </Style>
+
+    <Style Selector="TextBox.Connect">
+        <Setter Property="BorderThickness" Value="0"></Setter>
+        <Setter Property="CornerRadius" Value="8"></Setter>
+        <Setter Property="Padding" Value="10"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.JoinedSession">
+        <Setter Property="VerticalAlignment" Value="Center"></Setter>
+    </Style>
+
+    <Style Selector="Border.JoinedSession">
+        <Setter Property="Background" Value="#66000000"></Setter>
+        <Setter Property="BorderBrush" Value="#99FFFFFF"></Setter>
+        <Setter Property="CornerRadius" Value="8"></Setter>
+        <Setter Property="Padding" Value="10"></Setter>
+    </Style>
+
+    <Style Selector="SelectableTextBlock.JoinedSession">
+        <Setter Property="VerticalAlignment" Value="Center"></Setter>
+        <Setter Property="Foreground" Value="#8ec6ff"></Setter>
+        <Setter Property="FontWeight" Value="Bold"></Setter>
+        <Setter Property="FontSize" Value="16"></Setter>
+    </Style>
+
+    <Style Selector="Button.Connect">
+        <Setter Property="Background" Value="#8ec6ff"></Setter>
+        <Setter Property="Foreground" Value="Black"></Setter>
+        <Setter Property="CornerRadius" Value="8"></Setter>
+        <Setter Property="Padding" Value="10"></Setter>
+        <Setter Property="Margin" Value="10,0,00,0"></Setter>
+    </Style>
+
+    <Style Selector="Button.Connect:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#5facfc"></Setter>
+        <Setter Property="Foreground" Value="Black"></Setter>
+    </Style>
+
+    <Style Selector="Button.TakeControl">
+        <Setter Property="Background" Value="#8ec6ff"></Setter>
+        <Setter Property="Foreground" Value="Black"></Setter>
+        <Setter Property="CornerRadius" Value="8"></Setter>
+        <Setter Property="Padding" Value="10"></Setter>
+        <Setter Property="Margin" Value="10,0,00,0"></Setter>
+    </Style>
+
+    <Style Selector="Button.TakeControl:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#5facfc"></Setter>
+        <Setter Property="Foreground" Value="Black"></Setter>
+    </Style>
+
+    <Style Selector="Button.Leave">
+        <Setter Property="CornerRadius" Value="8"></Setter>
+        <Setter Property="Padding" Value="10"></Setter>
+        <Setter Property="Margin" Value="10,0,00,0"></Setter>
+        <Setter Property="Foreground" Value="White"></Setter>
+    </Style>
+
+    <Style Selector="Border.MainIcon">
+        <Setter Property="Background" Value="Gray"></Setter>
+        <Setter Property="CornerRadius" Value="9"></Setter>
+        <Setter Property="Padding" Value="5"></Setter>
+        <Setter Property="Margin" Value="0,0,10,0"></Setter>
+    </Style>
+
+    <Style Selector="Border.MainIcon > PathIcon">
+        <Setter Property="Width" Value="30"></Setter>
+        <Setter Property="Height" Value="30"></Setter>
+        <Setter Property="Foreground" Value="White"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.ClientName">
+        <Setter Property="Foreground" Value="Gray"></Setter>
+    </Style>
+
+    <Style Selector="SelectableTextBlock.PeerId">
+        <Setter Property="Foreground" Value="#8ec6ff"></Setter>
+        <Setter Property="FontSize" Value="16"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.Note">
+        <Setter Property="Foreground" Value="#94a3b8"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.ErrorNote">
+        <Setter Property="Foreground" Value="#7Fff6d6d"></Setter>
+    </Style>
+
+    <Style Selector="Border.Badge">
+        <Setter Property="Padding" Value="20, 10"></Setter>
+    </Style>
+
+    <Style Selector="Border.Success">
+        <Setter Property="Background" Value="DarkSeaGreen"></Setter>
+    </Style>
+
+    <Style Selector="Border.Error">
+        <Setter Property="Background" Value="#7Fff6d6d"></Setter>
+    </Style>
+
+    <Style Selector="Border.Success">
+        <Setter Property="Background" Value="DarkSeaGreen"></Setter>
+    </Style>
+
+    <Style Selector="Border.Info">
+        <Setter Property="Background" Value="#8ec6ff"></Setter>
+    </Style>
+
+    <Style Selector="Separator">
+        <Setter Property="Background" Value="Black"></Setter>
+        <Setter Property="Margin" Value="10"></Setter>
+    </Style>
+
+    <Style Selector="Border.Connections">
+        <Setter Property="Padding" Value="0, 20"></Setter>
+    </Style>
+
+    <Style Selector="DockPanel.ConnectionsCardTitle">
+        <Setter Property="Margin" Value="20, 0, 20, 20"></Setter>
+    </Style>
+
+    <Style Selector="ScrollViewer.Connections">
+        <Setter Property="AllowAutoHide" Value="True"></Setter>
+        <Setter Property="Padding" Value="20, 0"></Setter>
+    </Style>
+
+    <Style Selector="ComboBox.Aircraft">
+        <Setter Property="BorderThickness" Value="0"></Setter>
+        <Setter Property="CornerRadius" Value="8"></Setter>
+        <Setter Property="Padding" Value="10"></Setter>
+        <Setter Property="HorizontalAlignment" Value="Stretch"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.Aircraft">
+        <Setter Property="Foreground" Value="#94a3b8"></Setter>
+        <Setter Property="VerticalAlignment" Value="Center"></Setter>
+    </Style>
+
+    <Style Selector="Border.Direct">
+        <Setter Property="Background" Value="Green"></Setter>
+        <Setter Property="CornerRadius" Value="7"></Setter>
+        <Setter Property="Padding" Value="4, 2, 4, 2"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.Direct">
+        <Setter Property="Foreground" Value="White"></Setter>
+        <Setter Property="FontSize" Value="8"></Setter>
+    </Style>
+
+
+    <Style Selector="Border.Relay">
+        <Setter Property="Background" Value="Orange"></Setter>
+        <Setter Property="CornerRadius" Value="7"></Setter>
+        <Setter Property="Padding" Value="4, 2, 4, 2"></Setter>
+    </Style>
+
+    <Style Selector="TextBlock.Relay">
+        <Setter Property="Foreground" Value="Black"></Setter>
+        <Setter Property="FontSize" Value="8"></Setter>
+    </Style>
+
+    <Style Selector="Button.Link">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="#3b82f6"/>
+        <Setter Property="Padding" Value="0"/>
+    </Style>
+
+    <Style Selector="Button.NavTab">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0,0,0,10" />
+        <Setter Property="Foreground" Value="#cbd5e1" />
+        <Setter Property="FontSize" Value="18" />
+    </Style>
+
+    <Style Selector="Button.NavTab:pointerover">
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+
+    <Style Selector="Button.NavTab.Selected">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+        <Setter Property="BorderBrush" Value="#6faeff" />
+    </Style>
+
+    <Style Selector="Border.A320Hero">
+        <Setter Property="Background" Value="#122033" />
+        <Setter Property="BorderBrush" Value="#2a4669" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="16" />
+        <Setter Property="Padding" Value="18" />
+    </Style>
+
+    <Style Selector="Border.A320Inset">
+        <Setter Property="Background" Value="#111827" />
+        <Setter Property="BorderBrush" Value="#243042" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <Style Selector="Border.A320Status">
+        <Setter Property="CornerRadius" Value="999" />
+        <Setter Property="Padding" Value="10,4" />
+    </Style>
+
+    <Style Selector="Border.A320StatusOn">
+        <Setter Property="Background" Value="#194c35" />
+    </Style>
+
+    <Style Selector="Border.A320StatusWait">
+        <Setter Property="Background" Value="#3d3520" />
+    </Style>
+
+    <Style Selector="Border.A320StatusOff">
+        <Setter Property="Background" Value="#3c2432" />
+    </Style>
+
+    <Style Selector="TextBlock.A320Status">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="TextBlock.A320SectionTitle">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="15" />
+    </Style>
+
+    <Style Selector="TextBlock.A320Subtle">
+        <Setter Property="Foreground" Value="#9fb0c6" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style Selector="TextBlock.CurveMetricLabel">
+        <Setter Property="Foreground" Value="#d9e3f0" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="TextBlock.CurveMetricValue">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Border.CurveGraphShell">
+        <Setter Property="Background" Value="#2b313b" />
+        <Setter Property="BorderBrush" Value="#3a4452" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <Style Selector="Slider.A320CurveSlider">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="Height" Value="38" />
+        <Setter Property="MinWidth" Value="170" />
+        <Setter Property="Margin" Value="0,2,0,2" />
+    </Style>
+
+    <Style Selector="Border.CurveValueBadge">
+        <Setter Property="MinWidth" Value="54" />
+        <Setter Property="Height" Value="36" />
+        <Setter Property="CornerRadius" Value="9" />
+        <Setter Property="Background" Value="#111827" />
+        <Setter Property="BorderBrush" Value="#4c5d73" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="8,0" />
+    </Style>
+
+    <Style Selector="TextBlock.CurveValueBadge">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="Button.CurveReset">
+        <Setter Property="Background" Value="#1f2937" />
+        <Setter Property="Foreground" Value="#cde7ff" />
+        <Setter Property="BorderBrush" Value="#334155" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="9" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="MinWidth" Value="56" />
+    </Style>
+
+    <Style Selector="Button.Secondary">
+        <Setter Property="Background" Value="#1f2937" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="BorderBrush" Value="#334155" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="10,8" />
+    </Style>
+
+    <Style Selector="Button.PrimaryWide">
+        <Setter Property="Background" Value="#7db4ff" />
+        <Setter Property="Foreground" Value="Black" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="14,10" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+</Styles>

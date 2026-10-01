@@ -1,0 +1,16 @@
+**/bin/
+**/obj/
+**/.vs/
+**/log/
+**/*.log
+**/*.tlog
+**/*.lastbuildstate
+**/*.recipe
+**/*.obj
+**/*.pdb
+**/*.dll
+**/*.exe
+FsCopilot-main/FsCopilot.Bridge/PackageSources/modules/*.wasm
+artifacts/
+FsCopilot-main/FsCopilot.Bridge/Packages/
+FsCopilot-main/FsCopilot.Bridge/_PackageInt/

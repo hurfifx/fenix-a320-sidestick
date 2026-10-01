@@ -1,0 +1,15 @@
+# Minimal variable fragment for the FS Copilot Fenix sidestick integration.
+# Merge these entries into a complete Fenix aircraft profile you are licensed to use.
+
+shared:
+  - get: L:N_FC_SIDESTICK_CAPT_PITCH
+  - get: L:N_FC_SIDESTICK_CAPT_BANK
+  - get: L:N_FC_SIDESTICK_FO_PITCH
+  - get: L:N_FC_SIDESTICK_FO_BANK
+  - get: L:S_FC_CAPT_INST_DISCONNECT
+  - get: L:S_FC_FO_INST_DISCONNECT
+
+master:
+  # Master-authoritative throttle synchronization; this does not lock local hardware.
+  - get: L:A_FC_THROTTLE_LEFT_INPUT
+  - get: L:A_FC_THROTTLE_RIGHT_INPUT

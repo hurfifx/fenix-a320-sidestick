@@ -1,0 +1,786 @@
+using System.Globalization;
+
+namespace FsCopilot.Connection;
+
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using Microsoft.FlightSimulator.SimConnect;
+public class SimClient : IDisposable
+{
+    private static readonly string WasmCompatibilityVersion = NormalizeBridgeVersion(
+        Assembly.GetEntryAssembly()?
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion
+            .Split('+')[0] ?? "1.2");
+
+    private static readonly object DefaultHValue = 1;
+
+    private readonly SimConnectConsumer _consumer;
+    private readonly SimConnectProducer _producer;
+    private readonly SimConnectConsumer[] _consumers;
+    private readonly ConcurrentDictionary<string, DEF> _defs = new();
+    private readonly ConcurrentDictionary<string, object> _streams = new();
+    private int _rrIndex;
+    private uint _controlHeartbeat;
+    private uint _defId = 100;
+    private uint _requestId = 100;
+    private readonly Lock _nativeControlMaskLock = new();
+    private IDisposable? _nativePitchRollMask;
+    private readonly IObservable<string> _hEvents;
+    private readonly IObservable<bool> _conflict;
+    private readonly BehaviorSubject<BehaviorControl> _control = new(BehaviorControl.Master);
+    private readonly DEF _commBusDefId;
+    private readonly DEF _varWatchDefId;
+    private readonly DEF _watchDefId;
+    private readonly DEF _unwatchDefId;
+    // private readonly DEF _setDefId;
+    private readonly DEF _exeDefId;
+    private const uint SimConnectUnused = 0xFFFFFFFF;
+
+    public readonly IObservable<bool> WasmReady;
+    public readonly IObservable<bool> WasmVersionMismatch;
+    public IObservable<bool> Connected => _consumer.Connected.ObserveOn(TaskPoolScheduler.Default);
+    public IObservable<string> Aircraft => _consumer.Aircraft.ObserveOn(TaskPoolScheduler.Default);
+    public IObservable<bool> Conflict => _conflict.ObserveOn(TaskPoolScheduler.Default);
+    public IObservable<Interact> Interactions { get; }
+    // public IObservable<SimConfig> Config { get; }
+
+    public SimClient(string appName)
+    {
+        _consumer = new($"{appName} (Consumer)");
+        _producer = new($"{appName} (Producer)");
+        _consumers =
+        [
+            new($"{appName} (Consumer 1)"),
+            new($"{appName} (Consumer 2)")
+        ];
+        _consumer.Aircraft.Subscribe(name => Log.Information("[SimConnect] Loaded aircraft: {Aircraft}", name));
+
+        var readyDefId = RegisterClientStruct<StrMsg>("FSC_READY", producer: false);
+        var commBusDefId = RegisterClientStruct<StrMsg>("FSC_BUS_OUT", producer: false);
+        var controlDefId = RegisterClientStruct<ControlMsg>("FSC_CONTROL", producer: true);
+        _commBusDefId = RegisterClientStruct<StrMsg>("FSC_BUS_IN", producer: true);
+        _watchDefId = RegisterClientStruct<VarMsg>("FSC_WATCH", producer: true);
+        _unwatchDefId = RegisterClientStruct<VarMsg>("FSC_UNWATCH", producer: true);
+        _varWatchDefId = RegisterClientStruct<VarMsg>("FSC_VARIABLE", producer: false);
+        // _setDefId = RegisterClientStruct<VarMsg>("FSC_SET", producer: true);
+        _exeDefId = RegisterClientStruct<StrMsg>("FSC_EXE", producer: true);
+
+        var wasmVersion = new Subject<string>();
+        _consumer.SimClientData
+            .Where(e => (DEF)e.dwDefineID == readyDefId && e.dwData is { Length: > 0 })
+            .Select(e => (StrMsg)e.dwData[0])
+            .Select(msg => msg.Msg?.Trim() ?? string.Empty)
+            .Do(version => Log.Information(
+                "[SimConnect] Bridge ready version '{Version}' (compatibility '{Compatibility}')",
+                version,
+                NormalizeBridgeVersion(version)))
+            .Subscribe(version => wasmVersion.OnNext(version));
+
+        WasmReady = wasmVersion
+            .Select(v => !string.IsNullOrWhiteSpace(v))
+            .StartWith(false)
+            .DistinctUntilChanged()
+            .Replay(1).RefCount();
+
+        WasmVersionMismatch = wasmVersion
+            .Select(v => !string.IsNullOrWhiteSpace(v) && !IsCompatibleBridgeVersion(v))
+            .StartWith(false)
+            .DistinctUntilChanged()
+            .Replay(1).RefCount();
+
+        Observable.Interval(TimeSpan.FromMilliseconds(200))
+            .WithLatestFrom(_control, (_, control) => control)
+            .Subscribe(control => _producer.PostHighPriority(sim => sim.SetClientData(controlDefId, controlDefId,
+                SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, new ControlMsg
+                {
+                    Value = (int)control,
+                    Heartbeat = unchecked(++_controlHeartbeat)
+                })));
+
+        _consumer.Configure(sim => sim.RequestClientData(
+            readyDefId, readyDefId, readyDefId,
+            SIMCONNECT_CLIENT_DATA_PERIOD.SECOND, SIMCONNECT_CLIENT_DATA_REQUEST_FLAG.DEFAULT, 0, 0, 0), _ => {});
+
+        _consumer.Configure(sim => sim.RequestClientData(
+            commBusDefId, commBusDefId, commBusDefId,
+            SIMCONNECT_CLIENT_DATA_PERIOD.ON_SET, SIMCONNECT_CLIENT_DATA_REQUEST_FLAG.DEFAULT, 0, 0, 0), _ => {});
+
+        _consumer.Configure(sim => sim.RequestClientData(
+            _varWatchDefId, _varWatchDefId, _varWatchDefId,
+            SIMCONNECT_CLIENT_DATA_PERIOD.ON_SET, SIMCONNECT_CLIENT_DATA_REQUEST_FLAG.DEFAULT, 0, 0, 0), _ => {});
+
+        var socketMessages = _consumer.SimClientData
+            .ObserveOn(TaskPoolScheduler.Default)
+            .Where(e => (DEF)e.dwDefineID == commBusDefId)
+            .Select(e => (StrMsg)e.dwData[0])
+            .Select(msg => msg.Msg)
+            .Do(json => Log.Verbose("[SimConnect] RECV: {json}", json))
+            .Select(json => JsonDocument.Parse(json).RootElement)
+            .Replay(0).RefCount();
+
+       _hEvents = socketMessages
+           .Where(json => json.String("type").Equals("hevent"))
+           .Select(json => json.String("name"))
+           .Replay(0).RefCount();
+
+       Interactions = socketMessages
+           .Where(json => json.String("type").Equals("interact"))
+            .Select(json => new Interact(json.String("instrument"), json.String("event"), json.String("id"), json.StringOrNull("value")))
+            .Replay(0).RefCount();
+
+       _conflict = Stream("L:YourControlsPanelId", "number")
+           .Select(value => Convert.ToInt32(value) > 0)
+           .DistinctUntilChanged()
+           .Replay(0).RefCount();
+
+       return;
+
+       DEF RegisterClientStruct<T>(string name, bool producer)
+       {
+           var defId = (DEF)Interlocked.Increment(ref _defId);
+           Action<SimConnect> configure = sim =>
+           {
+               sim.MapClientDataNameToID(name, defId);
+               var size = (uint)Marshal.SizeOf<T>();
+               sim.CreateClientData(defId, size, SIMCONNECT_CREATE_CLIENT_DATA_FLAG.DEFAULT);
+               sim.AddToClientDataDefinition(defId, 0, size, 0, 0);
+               sim.RegisterStruct<SIMCONNECT_RECV_CLIENT_DATA, T>(defId);
+           };
+
+           if (producer) _producer.Configure(configure, _ => {});
+           else _consumer.Configure(configure, _ => {});
+
+           return defId;
+       }
+    }
+
+    public void Dispose()
+    {
+        SetNativePitchRollEventMask(false);
+        _consumer.Dispose();
+        _producer.Dispose();
+        foreach (var consumer in _consumers) consumer.Dispose();
+    }
+
+    private static bool IsCompatibleBridgeVersion(string version) =>
+        NormalizeBridgeVersion(version).Equals(WasmCompatibilityVersion, StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeBridgeVersion(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return string.Empty;
+
+        var trimmed = version.Trim();
+        if (Version.TryParse(trimmed, out var parsed))
+            return $"{parsed.Major}.{parsed.Minor}";
+
+        var parts = trimmed.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length >= 2
+            ? $"{parts[0]}.{parts[1]}"
+            : trimmed;
+    }
+
+    public IDisposable Register<T>() where T : unmanaged
+    {
+        var key = typeof(T).FullName!;
+        var defId = (DEF)Interlocked.Increment(ref _defId);
+        if (!_defs.TryAdd(typeof(T).FullName!, defId)) return Disposable.Empty;
+
+        return new CompositeDisposable(
+            _consumer.Configure(InitializeConsumer, DeinitializeConsumer),
+            _producer.Configure(InitializeProducer, DeinitializeProducer),
+            Disposable.Create(() => _defs.TryRemove(key, out _)));
+
+        void InitializeConsumer(SimConnect sim)
+        {
+            sim.AddToDataDefinitionFromStruct<T>(defId);
+            sim.RegisterDataDefineStruct<T>(defId);
+        }
+
+        void DeinitializeConsumer(SimConnect sim)
+        {
+            sim.ClearDataDefinition(defId);
+        }
+
+        void InitializeProducer(SimConnect sim)
+        {
+            sim.MapClientDataNameToID($"FSC_{typeof(T).Name.ToUpper()}", defId);
+
+            var size = (uint)Unsafe.SizeOf<T>();
+            try { sim.CreateClientData(defId, size, SIMCONNECT_CREATE_CLIENT_DATA_FLAG.DEFAULT); }
+            catch (Exception) { /* ignore */ }
+
+            sim.AddToClientDataDefinition(defId, 0, size, 0.0f, 0xFFFFFFFF);
+        }
+
+        void DeinitializeProducer(SimConnect sim)
+        {
+            sim.ClearClientDataDefinition(defId);
+        }
+    }
+
+    public void Set<T>(T def) where T : unmanaged
+    {
+        if (!_defs.TryGetValue(typeof(T).FullName!, out var defId)) return;
+
+        _producer.Post(sim => sim.SetClientData(defId, defId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, def));
+    }
+
+    public void SetLatestHighPriority<T>(T def) where T : unmanaged
+    {
+        var key = typeof(T).FullName!;
+        if (!_defs.TryGetValue(key, out var defId)) return;
+
+        _producer.PostLatestHighPriority(key, sim => sim.SetClientData(defId, defId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, def));
+    }
+
+    // public void Set(SimConfig config)
+    // {
+    //     var msg = Envelope("config", writer =>
+    //     {
+    //         writer.WriteBoolean("control", config.Control);
+    //     });
+    //
+    //     _producer.Post(sim => sim.SetClientData(_commBusDefId, _commBusDefId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, new CommBusMsg { Msg = msg }));
+    // }
+
+    public void SetControl(BehaviorControl value) => _control.OnNext(value);
+
+    public void SetNativePitchRollEventMask(bool enabled)
+    {
+        lock (_nativeControlMaskLock)
+        {
+            if (enabled)
+            {
+                _nativePitchRollMask ??= CreateNativePitchRollEventMask();
+                return;
+            }
+
+            _nativePitchRollMask?.Dispose();
+            _nativePitchRollMask = null;
+        }
+    }
+
+    public void Set(Interact interact)
+    {
+        var msg = Envelope("interact", writer =>
+        {
+            writer.WriteString("instrument", interact.Instrument);
+            writer.WriteString("event", interact.Event);
+            writer.WriteString("id", interact.Id);
+            writer.WriteString("value", interact.Value);
+        });
+        _producer.Post(sim => sim.SetClientData(_commBusDefId, _commBusDefId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, new StrMsg { Msg = msg }));
+    }
+
+    public void Execute(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression)) return;
+        _producer.Post(sim => sim.SetClientData(_exeDefId, _exeDefId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0,
+            new StrMsg { Msg = expression }));
+    }
+
+    public void ExecuteHighPriority(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression)) return;
+        _producer.PostHighPriority(sim => sim.SetClientData(_exeDefId, _exeDefId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0,
+            new StrMsg { Msg = expression }));
+    }
+
+    public void Set(string name, string? sUnits, object[] values)
+    {
+        if (values.Length == 0) return;
+        if (name.StartsWith("L:")) SetLVar(name, sUnits, Convert.ToSingle(values[^1]));
+        if (name.StartsWith("A:")) SetSimVar(name[2..], sUnits, values[^1]);
+        if (name.StartsWith("K:")) TransmitKEvent(name[2..], values);
+        // B / H / Z / Others
+        if (name.Length > 2 && name[1] == ':')
+            Execute($"{string.Join(' ', values.Select(value => Convert.ToString(value, CultureInfo.InvariantCulture)))} (>{name})");
+    }
+
+    private void SetLVar(string datumName, string? sUnits, object value)
+    {
+        var defId = _defs.GetOrAdd($"PRODUCER_{datumName}_{sUnits}", _ =>
+        {
+            var nextId = (DEF)Interlocked.Increment(ref _defId);
+            _producer.Configure(sim =>
+            {
+                const SIMCONNECT_DATATYPE datumType = SIMCONNECT_DATATYPE.FLOAT32;
+                var clrType = SimConnectExtensions.ToClrType(datumType);
+
+                sUnits = !string.IsNullOrWhiteSpace(sUnits) ? sUnits : "number";
+                sim.AddToDataDefinition(nextId, datumName, sUnits, datumType, 0.0f, SimConnect.SIMCONNECT_UNUSED);
+
+                typeof(SimConnect).GetMethod(nameof(SimConnect.RegisterDataDefineStruct),
+                        BindingFlags.Public | BindingFlags.Instance)!
+                    .MakeGenericMethod(clrType)
+                    .Invoke(sim, [nextId]);
+            }, _ => { });
+            return nextId;
+        });
+
+        _producer.Post(sim => sim.SetDataOnSimObject(defId,
+            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, value));
+    }
+
+    private void SetSimVar(string datumName, string? sUnits, object value)
+    {
+        var defId = _defs.GetOrAdd($"PRODUCER_{datumName}_{sUnits}", _ =>
+        {
+            var nextId = (DEF)Interlocked.Increment(ref _defId);
+            _producer.Configure(sim =>
+            {
+                sUnits = !string.IsNullOrWhiteSpace(sUnits) ? sUnits : "number";
+                var datumType = SimConnectExtensions.InferDataType(sUnits);
+                var clrType = SimConnectExtensions.ToClrType(datumType);
+
+                sim.AddToDataDefinition(nextId, datumName, sUnits, datumType, 0.0f, SimConnect.SIMCONNECT_UNUSED);
+
+                typeof(SimConnect).GetMethod(nameof(SimConnect.RegisterDataDefineStruct),
+                        BindingFlags.Public | BindingFlags.Instance)!
+                    .MakeGenericMethod(clrType)
+                    .Invoke(sim, [nextId]);
+            }, _ => { });
+            return nextId;
+        });
+
+        _producer.Post(sim => sim.SetDataOnSimObject(defId,
+            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_DATA_SET_FLAG.DEFAULT, value));
+    }
+
+    private void TransmitKEvent(string eventName, object[] values)
+    {
+        var eventId = _defs.GetOrAdd($"PRODUCER_K:{eventName}", _ =>
+        {
+            var nextId = (DEF)Interlocked.Increment(ref _defId);
+            _producer.Configure(sim => sim.MapClientEventToSimEvent((EVT)nextId, eventName), _ => { });
+            return nextId;
+        });
+
+        var dwData0 = NormalizeValue(values[0]);
+        var dwData1 = values.Length > 1 ? NormalizeValue(values[1]) : 0;
+        var dwData2 = values.Length > 2 ? NormalizeValue(values[2]) : 0;
+        var dwData3 = values.Length > 3 ? NormalizeValue(values[3]) : 0;
+        var dwData4 = values.Length > 4 ? NormalizeValue(values[4]) : 0;
+
+        _producer.Post(sim => sim.TransmitClientEvent_EX1(
+            SimConnect.SIMCONNECT_OBJECT_ID_USER, (EVT)eventId, GRP.DUMMY,
+            SIMCONNECT_EVENT_FLAG.GROUPID_IS_PRIORITY,
+            dwData0, dwData1, dwData2, dwData3, dwData4));
+        return;
+
+        uint NormalizeValue(object val)
+        {
+            uint vb = val switch
+            {
+                uint ui => ui,
+                bool b => b ? 1u : 0u,
+                byte by => by,
+                sbyte sb => (byte)sb,
+                short s => (ushort)s,
+                ushort us => us,
+                int i => unchecked((uint)i),
+                long l => unchecked((uint)l),
+                ulong ul => unchecked((uint)ul),
+                float d => unchecked((uint)(int)Math.Round(d, MidpointRounding.AwayFromZero)),
+                double d => unchecked((uint)(int)Math.Round(d, MidpointRounding.AwayFromZero)),
+                Enum e => Convert.ToUInt32(e),
+                _ => 0
+            };
+            return vb;
+        }
+    }
+
+    // private void SetClientVar(string name, object value)
+    // {
+    //     _producer.Post(sim => sim.SetClientData(_setDefId, _setDefId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0,
+    //         new VarMsg { Name = name, Value = Convert.ToDouble(value) }));
+    // }
+
+    public IObservable<T> Stream<T>() where T : struct
+    {
+        var key = typeof(T).FullName!;
+        if (!_defs.TryGetValue(key, out var defId)) return Observable.Empty<T>();
+
+        return (IObservable<T>)_streams.GetOrAdd($"Stream_{key}", _ => Observable.Create<T>(observer =>
+        {
+            var scheduler = new EventLoopScheduler();
+            var started = false;
+            ulong seq = 0;
+
+            var sub = _consumer.SimObjectData
+                .ObserveOn(TaskPoolScheduler.Default)
+                .Subscribe(e =>
+                {
+                    if ((DEF)e.dwDefineID != defId) return;
+                    if (e.dwData is not { Length: > 0 }) return;
+                    if (!started)
+                    {
+                        started = true;
+                        Log.Debug("[SimConnect] Stream {Stream} started", typeof(T).Name);
+                    }
+
+                    seq++;
+                    observer.OnNext((T)e.dwData[0]);
+                },
+                observer.OnError,
+                observer.OnCompleted);
+
+            var consumerConfig = _consumer.Configure(InitializeConsumer, DeinitializeConsumer);
+
+            return () =>
+            {
+                sub.Dispose();
+                consumerConfig.Dispose();
+                scheduler.Dispose();
+            };
+
+            void InitializeConsumer(SimConnect sim) =>
+                sim.RequestDataOnSimObject(
+                    (REQ)Interlocked.Increment(ref _requestId), defId, SimConnect.SIMCONNECT_OBJECT_ID_USER,
+                    SIMCONNECT_PERIOD.SIM_FRAME, SIMCONNECT_DATA_REQUEST_FLAG.CHANGED, 0, 0, 0);
+
+            void DeinitializeConsumer(SimConnect sim) =>
+                sim.RequestDataOnSimObject(
+                    (REQ)Interlocked.Increment(ref _requestId), defId, SimConnect.SIMCONNECT_OBJECT_ID_USER,
+                    SIMCONNECT_PERIOD.NEVER, SIMCONNECT_DATA_REQUEST_FLAG.DEFAULT, 0, 0, 0);
+        }).Replay(1).RefCount());
+    }
+
+    public IObservable<object> Stream(string name, string sUnits)
+    {
+        if (name.StartsWith("L:")) return SimVar(name, string.IsNullOrWhiteSpace(sUnits) ? "number" : sUnits, SIMCONNECT_DATATYPE.FLOAT32);
+        if (name.StartsWith("A:")) return SimVar(name[2..], string.IsNullOrWhiteSpace(sUnits) ? "number" : sUnits);
+        if (name.StartsWith("H:")) return HVar(name);
+        if (name.StartsWith("K:")) return KEvent(name[2..]);
+        // B / Z / Others
+        if (name.Length > 2 && name[1] == ':') return ClientVar(name, string.IsNullOrWhiteSpace(sUnits) ? "number" : sUnits);
+        return Observable.Empty<object>();
+    }
+
+    private IObservable<object> SimVar(string datumName, string sUnits, SIMCONNECT_DATATYPE? datatype = null) =>
+        (IObservable<object>)_streams.GetOrAdd($"SimVar_{datumName}", key => Observable.Create<object>(observer =>
+        {
+            var defId = (DEF)Interlocked.Increment(ref _defId);
+            var reqId = (REQ)Interlocked.Increment(ref _requestId);
+
+            var consumer = _consumers[(Interlocked.Increment(ref _rrIndex) & int.MaxValue) % _consumers.Length];
+            var sub = consumer.SimObjectData.ObserveOn(TaskPoolScheduler.Default).Subscribe(e =>
+                {
+                    if ((DEF)e.dwDefineID != defId) return;
+                    if (e.dwData is { Length: > 0 }) observer.OnNext(e.dwData[0]);
+                },
+                observer.OnError,
+                observer.OnCompleted);
+
+            var consumerConfig = consumer.Configure(InitializeConsumer, DeinitializeConsumer);
+
+            return () =>
+            {
+                sub.Dispose();
+                consumerConfig.Dispose();
+            };
+
+            void InitializeConsumer(SimConnect sim)
+            {
+                var datumType = datatype ?? SimConnectExtensions.InferDataType(sUnits);
+                var clrType = SimConnectExtensions.ToClrType(datumType);
+
+                sim.AddToDataDefinition(defId, datumName, sUnits, datumType, 0.0f, SimConnect.SIMCONNECT_UNUSED);
+                // sim.RegisterDataDefineStruct<T>((DEF)nextId);
+
+                typeof(SimConnect).GetMethod(nameof(SimConnect.RegisterDataDefineStruct),
+                        BindingFlags.Public | BindingFlags.Instance)!
+                    .MakeGenericMethod(clrType)
+                    .Invoke(sim, [defId]);
+
+                sim.RequestDataOnSimObject(
+                    reqId, defId, SimConnect.SIMCONNECT_OBJECT_ID_USER,
+                    SIMCONNECT_PERIOD.SIM_FRAME, SIMCONNECT_DATA_REQUEST_FLAG.CHANGED, 0, 0, 0);
+            }
+
+            void DeinitializeConsumer(SimConnect sim)
+            {
+                sim.RequestDataOnSimObject(
+                    reqId, defId, SimConnect.SIMCONNECT_OBJECT_ID_USER,
+                    SIMCONNECT_PERIOD.NEVER, SIMCONNECT_DATA_REQUEST_FLAG.DEFAULT, 0, 0, 0);
+                sim.ClearDataDefinition(defId);
+            }
+        }).Replay(1).RefCount());
+
+    private IObservable<object> ClientVar(string datumName, string sUnits) =>
+        (IObservable<object>)_streams.GetOrAdd($"ClientVar_{datumName}", key => Observable.Create<object>(observer =>
+        {
+            var sub = _consumer.SimClientData
+                .ObserveOn(TaskPoolScheduler.Default)
+                .Where(e => (DEF)e.dwDefineID == _varWatchDefId && e.dwData is { Length: > 0 })
+                .Select(e => (VarMsg)e.dwData[0])
+                .Where(e => e.Name.Equals(datumName, StringComparison.InvariantCultureIgnoreCase))
+                .Subscribe(e => observer.OnNext(e.Value),
+                    observer.OnError,
+                    observer.OnCompleted);
+
+            var watch = Observable.Interval(TimeSpan.FromMilliseconds(1000))
+                .StartWith(0)
+                // _wasmReady
+                // .Where(ready => ready)
+                .Subscribe(_ => _producer.Post(sim => sim.SetClientData(_watchDefId, _watchDefId,
+                    SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, new VarMsg { Name = datumName, Units = sUnits })));
+
+            return () =>
+            {
+                watch.Dispose();
+                sub.Dispose();
+                _producer.Post(sim => sim.SetClientData(_unwatchDefId, _unwatchDefId,
+                    SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, new VarMsg { Name = datumName }));
+            };
+        }).Replay(1).RefCount());
+
+    // private IObservable<object> ZVar(string name) =>
+    //     (IObservable<object>)_streams.GetOrAdd($"ZVar_{name}", key => Observable.Create<object>(observer =>
+    //     {
+    //         var sub = _varMessages
+    //             .Where(var => var.Name.Equals(name))
+    //             .Subscribe(var => observer.OnNext(var.Value % 1 == 0 ? (int)var.Value : var.Value));
+    //
+    //         var watch = Envelope("watch", writer =>
+    //         {
+    //             writer.WriteString("name", name);
+    //             writer.WriteString("units", "number");
+    //         });
+    //         _producer.Post(sim => sim.SetClientData(_commBusDefId, _commBusDefId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, new CommBusMsg { Msg = watch }));
+    //
+    //         return () =>
+    //         {
+    //             sub.Dispose();
+    //             var unwatch = Envelope("unwatch", writer => writer.WriteString("name", name));
+    //             _producer.Post(sim => sim.SetClientData(_commBusDefId, _commBusDefId, SIMCONNECT_CLIENT_DATA_SET_FLAG.DEFAULT, 0, new CommBusMsg { Msg = unwatch }));
+    //         };
+    //     }).Replay(1).RefCount());
+
+    private IObservable<object> KEvent(string datumName) =>
+        (IObservable<object>)_streams.GetOrAdd($"KEvent_{datumName}", key => Observable.Create<object>(observer =>
+        {
+            var defId = (DEF)Interlocked.Increment(ref _defId);
+            var groupId = (DEF)0;
+
+            var consumer = _consumers[(Interlocked.Increment(ref _rrIndex) & int.MaxValue) % _consumers.Length];
+            var sub = consumer.SimEventData.ObserveOn(TaskPoolScheduler.Default).Subscribe(e =>
+                {
+                    if ((DEF)e.uGroupID != groupId) return;
+                    if ((DEF)e.uEventID != defId) return;
+                    observer.OnNext(e.dwData);
+                },
+                observer.OnError,
+                observer.OnCompleted);
+
+            var consumerConfig = consumer.Configure(sim =>
+            {
+                sim.MapClientEventToSimEvent(defId, datumName);
+                sim.AddClientEventToNotificationGroup(groupId, defId, false);
+                sim.SetNotificationGroupPriority(groupId, SimConnect.SIMCONNECT_GROUP_PRIORITY_HIGHEST);
+            }, sim =>
+            {
+                sim.RemoveClientEvent(groupId, defId);
+            });
+
+            return () =>
+            {
+                sub.Dispose();
+                consumerConfig.Dispose();
+            };
+        }).Replay(1).RefCount());
+
+    private IObservable<object> HVar(string name) =>
+        (IObservable<object>)_streams.GetOrAdd(name, key => Observable.Create<object>(observer =>
+        {
+            var sub = _hEvents
+                .Where(ev => ev.Equals(name[2..]))
+                .Subscribe(row => observer.OnNext(DefaultHValue));
+
+            return () => sub.Dispose();
+        }).Replay(1).RefCount());
+
+    private IDisposable CreateNativePitchRollEventMask()
+    {
+        var notificationGroupId = (DEF)Interlocked.Increment(ref _defId);
+        var inputGroupId = (DEF)Interlocked.Increment(ref _defId);
+        var eventId = (DEF)Interlocked.Increment(ref _defId);
+        var inputDefinitions = NativePitchRollInputDefinitions();
+
+        return _producer.Configure(sim =>
+        {
+            sim.MapClientEventToSimEvent(eventId, string.Empty);
+            sim.ClearNotificationGroup(notificationGroupId);
+            sim.AddClientEventToNotificationGroup(notificationGroupId, eventId, true);
+            sim.SetNotificationGroupPriority(notificationGroupId, SimConnect.SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE);
+            var mapped = 0;
+            foreach (var inputDefinition in inputDefinitions)
+            {
+                try
+                {
+                    MapInputEventToClientEventCompat(sim, inputGroupId, inputDefinition, eventId);
+                    mapped++;
+                }
+                catch (Exception ex)
+                {
+                    Log.Verbose(ex, "[SimConnect] Native pitch/roll input mask skipped {Input}", inputDefinition);
+                }
+            }
+
+            sim.SetInputGroupPriority(inputGroupId, SimConnect.SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE);
+            sim.SetInputGroupState(inputGroupId, (uint)SIMCONNECT_STATE.ON);
+            Log.Information("[SimConnect] Native joystick pitch/roll input mask enabled ({Count} inputs)", mapped);
+        }, sim =>
+        {
+            try { sim.SetInputGroupState(inputGroupId, (uint)SIMCONNECT_STATE.OFF); } catch { /* ignore */ }
+            foreach (var inputDefinition in inputDefinitions)
+            {
+                try { sim.RemoveInputEvent(inputGroupId, inputDefinition); } catch { /* ignore */ }
+            }
+            try { sim.ClearInputGroup(inputGroupId); } catch { /* ignore */ }
+            try { sim.SetNotificationGroupPriority(notificationGroupId, SimConnect.SIMCONNECT_GROUP_PRIORITY_LOWEST); } catch { /* ignore */ }
+            try { sim.RemoveClientEvent(notificationGroupId, eventId); } catch { /* ignore */ }
+            try { sim.ClearNotificationGroup(notificationGroupId); } catch { /* ignore */ }
+            Log.Information("[SimConnect] Native joystick pitch/roll input mask disabled");
+        });
+
+        static string[] NativePitchRollInputDefinitions()
+        {
+            const int maxJoystickIndex = 16;
+            var inputs = new string[maxJoystickIndex * 2];
+            var offset = 0;
+            for (var joystickIndex = 0; joystickIndex < maxJoystickIndex; joystickIndex++)
+            {
+                inputs[offset++] = $"joystick:{joystickIndex}:XAxis";
+                inputs[offset++] = $"joystick:{joystickIndex}:YAxis";
+            }
+
+            return inputs;
+        }
+    }
+
+    public IObservable<object> InputEvent(string inputDefinition) =>
+        (IObservable<object>)_streams.GetOrAdd($"InputEvent_{inputDefinition}", key => Observable.Create<object>(observer =>
+        {
+            var eventId = (DEF)Interlocked.Increment(ref _defId);
+            var notificationGroupId = (DEF)Interlocked.Increment(ref _defId);
+            var inputGroupId = (DEF)Interlocked.Increment(ref _defId);
+
+            var consumer = _consumers[(Interlocked.Increment(ref _rrIndex) & int.MaxValue) % _consumers.Length];
+            var sub = consumer.SimEventData
+                .ObserveOn(TaskPoolScheduler.Default)
+                .Where(e => (DEF)e.uEventID == eventId)
+                .Subscribe(e => observer.OnNext(e.dwData),
+                    observer.OnError,
+                    observer.OnCompleted);
+
+            var consumerConfig = consumer.Configure(sim =>
+            {
+                sim.MapClientEventToSimEvent(eventId, string.Empty);
+                sim.AddClientEventToNotificationGroup(notificationGroupId, eventId, true);
+                sim.SetNotificationGroupPriority(notificationGroupId, SimConnect.SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE);
+            }, sim =>
+            {
+                sim.RemoveClientEvent(notificationGroupId, eventId);
+                sim.ClearNotificationGroup(notificationGroupId);
+            });
+
+            var producerConfig = _producer.Configure(sim =>
+            {
+                MapInputEventToClientEventCompat(sim, inputGroupId, inputDefinition, eventId);
+                sim.SetInputGroupPriority(inputGroupId, SimConnect.SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE);
+                sim.SetInputGroupState(inputGroupId, (uint)SIMCONNECT_STATE.ON);
+            }, sim =>
+            {
+                sim.SetInputGroupState(inputGroupId, (uint)SIMCONNECT_STATE.OFF);
+                sim.RemoveInputEvent(inputGroupId, inputDefinition);
+                sim.ClearInputGroup(inputGroupId);
+            });
+
+            return () =>
+            {
+                producerConfig.Dispose();
+                consumerConfig.Dispose();
+                sub.Dispose();
+            };
+        }).Replay(1).RefCount());
+
+    private static string Envelope(string type, Action<Utf8JsonWriter> write)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("type", type);
+            write(writer);
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static void MapInputEventToClientEventCompat(
+        SimConnect sim,
+        Enum inputGroupId,
+        string inputDefinition,
+        Enum eventId)
+    {
+        var ex1 = typeof(SimConnect).GetMethod(nameof(SimConnect.MapInputEventToClientEvent_EX1),
+            [typeof(Enum), typeof(string), typeof(Enum), typeof(uint), typeof(Enum), typeof(uint), typeof(bool)]);
+        if (ex1 != null)
+        {
+            ex1.Invoke(sim, [inputGroupId, inputDefinition, eventId, 0u, (Enum)(DEF)SimConnectUnused, 0u, true]);
+            return;
+        }
+
+        sim.MapInputEventToClientEvent(inputGroupId, inputDefinition, eventId, 0, (DEF)SimConnectUnused, 0, true);
+    }
+
+    private enum DEF : uint;
+    private enum REQ : uint;
+    private enum EVT : uint;
+    private enum GRP { DUMMY, INPUTS }
+
+    // private record WatchedVar(string Name, double Value);
+
+    // [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    // private struct InterpolateHeader
+    // {
+    //     public uint Seq;
+    //     public uint TimeMs;
+    // }
+    //
+    // [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    // private struct Interpolate<T> where T : unmanaged
+    // {
+    //     public InterpolateHeader Header;
+    //     public T Data;
+    // }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    private struct ControlMsg
+    {
+        public int Value;
+        public uint Heartbeat;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    private struct StrMsg
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 512)]
+        public string Msg;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    private struct VarMsg
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string Name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+        public string Units;
+        public double Value;
+    }
+}

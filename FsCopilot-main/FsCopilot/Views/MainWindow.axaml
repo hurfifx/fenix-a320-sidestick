@@ -1,0 +1,651 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FsCopilot.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:fsCopilot="clr-namespace:FsCopilot"
+        mc:Ignorable="d"
+        d:DesignWidth="500"
+        d:DesignHeight="860"
+        Width="500"
+        Height="860"
+        CanResize="False"
+        RequestedThemeVariant="Dark"
+        x:Class="FsCopilot.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/fscopilot.ico"
+        Title="FS Copilot"
+        TransparencyLevelHint="AcrylicBlur"
+        Background="Transparent"
+        ExtendClientAreaToDecorationsHint="True">
+
+    <Window.Resources>
+        <fsCopilot:StringNotEmptyToBool x:Key="NotEmpty"/>
+        <fsCopilot:StringEmptyToBool x:Key="Empty"/>
+        <fsCopilot:InverseBool x:Key="Inverse"/>
+        <fsCopilot:BoolToWait x:Key="Wait"/>
+        <fsCopilot:QualityToBrush x:Key="QualityToBrush"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <StyleInclude Source="./MainWindowStyles.axaml" />
+    </Window.Styles>
+
+    <Window.Cursor>
+        <Binding Path="IsBusy" Converter="{StaticResource Wait}"/>
+    </Window.Cursor>
+
+    <Panel>
+        <ExperimentalAcrylicBorder IsHitTestVisible="False">
+            <ExperimentalAcrylicBorder.Material>
+                <ExperimentalAcrylicMaterial
+                    BackgroundSource="Digger"
+                    TintColor="Black"
+                    TintOpacity="1"
+                    MaterialOpacity="0.65" />
+            </ExperimentalAcrylicBorder.Material>
+        </ExperimentalAcrylicBorder>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <Grid Classes="Wrapper" RowDefinitions="Auto,Auto,*,Auto">
+                <Border Grid.Row="0"
+                        Classes="Card">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right"
+                                    Orientation="Vertical"
+                                    VerticalAlignment="Center"
+                                    Margin="0,0,8,0">
+                            <TextBlock Classes="Name"
+                                       Text="FS Copilot" />
+                            <TextBlock Classes="Version"
+                                       Text="{Binding Version, StringFormat='v{0}'}" />
+                        </StackPanel>
+
+                        <Border DockPanel.Dock="Left" Classes="MainIcon">
+                            <PathIcon Data="{StaticResource airplane_regular}">
+                                <PathIcon.RenderTransform>
+                                    <RotateTransform Angle="-45" />
+                                </PathIcon.RenderTransform>
+                            </PathIcon>
+                        </Border>
+                        <DockPanel DockPanel.Dock="Left">
+                            <SelectableTextBlock Classes="PeerId"
+                                                 DockPanel.Dock="Bottom"
+                                                 Text="{Binding PeerId}" />
+                            <TextBlock Classes="ClientName"
+                                       DockPanel.Dock="Top"
+                                       Text="{Binding ClientName}" />
+                        </DockPanel>
+                    </DockPanel>
+                </Border>
+
+                <StackPanel Grid.Row="1"
+                            Orientation="Horizontal"
+                            Spacing="22"
+                            Margin="12,2,12,0">
+                    <Button Classes="NavTab"
+                            Classes.Selected="{Binding IsSessionTabSelected}"
+                            Command="{Binding SelectSessionTabCommand}"
+                            Content="Session" />
+                    <Button Classes="NavTab"
+                            Classes.Selected="{Binding IsA320TabSelected}"
+                            Command="{Binding SelectA320TabCommand}"
+                            Content="A320" />
+                </StackPanel>
+
+                <Panel Grid.Row="2">
+                    <StackPanel IsVisible="{Binding ShowSessionContent}"
+                                Spacing="10">
+                        <Border Classes="Card">
+                            <StackPanel Spacing="10">
+                                <DockPanel>
+                                    <PathIcon Classes="CardTitle"
+                                              Data="{StaticResource plug_disconnected_regular}" />
+                                    <TextBlock Classes="CardTitle"
+                                               Text="Connection" />
+                                </DockPanel>
+
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right"
+                                            Classes="TakeControl"
+                                            Content="Take Control"
+                                            IsEnabled="{Binding ShowTakeControl}"
+                                            Command="{Binding TakeControlCommand}" />
+                                    <Button DockPanel.Dock="Right"
+                                            Classes="Leave"
+                                            Content="Leave"
+                                            Command="{Binding LeaveCommand}"
+                                            IsEnabled="{Binding Connected}" />
+                                    <Button DockPanel.Dock="Right"
+                                            Classes="Connect"
+                                            Content="Join"
+                                            Command="{Binding JoinCommand}"
+                                            IsEnabled="{Binding IsBusy, Converter={StaticResource Inverse}}" />
+                                    <TextBox Classes="Connect"
+                                             IsEnabled="{Binding IsBusy, Converter={StaticResource Inverse}}"
+                                             Watermark="Client code"
+                                             Text="{Binding ConnectionCode}" />
+                                </DockPanel>
+
+                                <TextBlock Classes="Note"
+                                           Text="Note: Make sure that all clients see each other after connecting." />
+
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="12"
+                                            VerticalAlignment="Center">
+                                    <TextBlock Classes="Note"
+                                               VerticalAlignment="Center"
+                                               Text="Seat" />
+                                    <RadioButton GroupName="CrewSeat"
+                                                 Content="Captain"
+                                                 IsChecked="{Binding IsCaptainSide}" />
+                                    <RadioButton GroupName="CrewSeat"
+                                                 Content="First Officer"
+                                                 IsChecked="{Binding IsFirstOfficerSide}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="Card Connections">
+                            <DockPanel>
+                                <DockPanel Classes="ConnectionsCardTitle"
+                                           DockPanel.Dock="Top">
+                                    <PathIcon DockPanel.Dock="Left"
+                                              Classes="CardTitle"
+                                              Data="{StaticResource person_board_regular}" />
+                                    <TextBlock DockPanel.Dock="Left"
+                                               Classes="CardTitle"
+                                               Text="Onboard" />
+                                </DockPanel>
+
+                                <ScrollViewer Classes="Connections"
+                                              DockPanel.Dock="Bottom">
+                                    <ItemsControl ItemsSource="{Binding Connections}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Vertical" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel>
+                                                    <StackPanel Orientation="Horizontal"
+                                                                Spacing="10"
+                                                                VerticalAlignment="Center">
+                                                        <PathIcon Foreground="#4CAF50"
+                                                                  Height="22"
+                                                                  IsVisible="{Binding QualityLevel, Converter={StaticResource QualityToBrush}, ConverterParameter=1}"
+                                                                  Data="{StaticResource cellular_data_1_regular}" />
+                                                        <PathIcon Foreground="#8BC34A"
+                                                                  Height="22"
+                                                                  IsVisible="{Binding QualityLevel, Converter={StaticResource QualityToBrush}, ConverterParameter=2}"
+                                                                  Data="{StaticResource cellular_data_2_regular}" />
+                                                        <PathIcon Foreground="#FFC107"
+                                                                  Height="22"
+                                                                  IsVisible="{Binding QualityLevel, Converter={StaticResource QualityToBrush}, ConverterParameter=3}"
+                                                                  Data="{StaticResource cellular_data_3_regular}" />
+                                                        <PathIcon Foreground="#FF9800"
+                                                                  Height="22"
+                                                                  IsVisible="{Binding QualityLevel, Converter={StaticResource QualityToBrush}, ConverterParameter=4}"
+                                                                  Data="{StaticResource cellular_data_4_regular}" />
+                                                        <PathIcon Foreground="#F44336"
+                                                                  Height="22"
+                                                                  IsVisible="{Binding QualityLevel, Converter={StaticResource QualityToBrush}, ConverterParameter=5}"
+                                                                  Data="{StaticResource cellular_data_5_regular}" />
+
+                                                        <StackPanel>
+                                                            <StackPanel DockPanel.Dock="Top"
+                                                                        Orientation="Horizontal">
+                                                                <TextBlock Text="{Binding PeerId}"
+                                                                           Foreground="#8ec6ff"
+                                                                           VerticalAlignment="Bottom"
+                                                                           FontSize="14" />
+                                                                <TextBlock Text="{Binding Name}"
+                                                                           Margin="5,0,0,0"
+                                                                           FontSize="14" />
+                                                            </StackPanel>
+
+                                                            <StackPanel Orientation="Horizontal"
+                                                                        Spacing="4"
+                                                                        VerticalAlignment="Center">
+                                                                <TextBlock Foreground="#94a3b8"
+                                                                           FontSize="11"
+                                                                           Text="{Binding Ping, StringFormat='PING: ~{0} ms'}" />
+                                                                <Border Classes="Direct"
+                                                                        IsVisible="{Binding IsDirect}">
+                                                                    <TextBlock Classes="Direct"
+                                                                               Text="direct" />
+                                                                </Border>
+                                                                <Border Classes="Relay"
+                                                                        IsVisible="{Binding IsDirect, Converter={StaticResource Inverse}}">
+                                                                    <TextBlock Classes="Relay"
+                                                                               Text="relay" />
+                                                                </Border>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </StackPanel>
+
+                                                    <Separator IsVisible="{Binding HasSeparatorAfter}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <Border Classes="Card"
+                            IsVisible="{Binding ShowA320Content}">
+                        <Grid>
+                            <StackPanel Spacing="16"
+                                        Opacity="{Binding FenixSettingsOpacity}"
+                                        IsHitTestVisible="{Binding FenixSidestickProfileEnabled}">
+                            <Border Classes="A320Hero">
+                                <Grid ColumnDefinitions="*,Auto"
+                                      RowDefinitions="Auto,Auto,Auto"
+                                      ColumnSpacing="12"
+                                      RowSpacing="10">
+                                    <StackPanel Grid.Row="0"
+                                                Grid.Column="0"
+                                                Spacing="4">
+                                        <TextBlock Classes="CardTitle"
+                                                   Text="Fenix A320 Shared Sidestick" />
+                                        <TextBlock Classes="A320Subtle"
+                                                   Text="Experimental Airbus sidestick takeover, merge and priority handling built directly into FS Copilot." />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Row="0"
+                                                Grid.Column="1"
+                                                Orientation="Horizontal"
+                                                Spacing="8"
+                                                VerticalAlignment="Top">
+                                        <Border Classes="A320Status A320StatusOn"
+                                                IsVisible="{Binding FenixOperationalArmed}">
+                                            <TextBlock Classes="A320Status"
+                                                       Text="Armed" />
+                                        </Border>
+                                        <Border Classes="A320Status A320StatusWait"
+                                                IsVisible="{Binding FenixOperationalStandby}">
+                                            <TextBlock Classes="A320Status"
+                                                       Text="Standby" />
+                                        </Border>
+                                        <Border Classes="A320Status A320StatusOff"
+                                                IsVisible="{Binding FenixOperationalDisabled}">
+                                            <TextBlock Classes="A320Status"
+                                                       Text="Disabled" />
+                                        </Border>
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="1"
+                                               Grid.ColumnSpan="2"
+                                               Classes="A320Subtle"
+                                               Text="{Binding FenixLoadedAircraftText}" />
+
+                                    <DockPanel Grid.Row="2"
+                                               Grid.ColumnSpan="2">
+                                        <Button DockPanel.Dock="Right"
+                                                Classes="Secondary"
+                                                Content="Disable A320 mode"
+                                                IsVisible="{Binding FenixSidestickProfileEnabled}"
+                                                Command="{Binding DisableFenixSidestickProfileCommand}" />
+                                        <TextBlock Classes="A320Subtle"
+                                                   Text="{Binding FenixOperationalStatusText}" />
+                                    </DockPanel>
+                                </Grid>
+                            </Border>
+
+                            <Border Classes="A320Inset"
+                                    IsVisible="{Binding FenixSetupChecklistVisible}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Classes="A320SectionTitle"
+                                               Text="First run checklist" />
+                                    <TextBlock Classes="A320Subtle"
+                                               Text="Before you taxi out, make sure both cockpits are aligned the same way as the tab settings below." />
+                                    <TextBlock Classes="A320Subtle"
+                                               Text="{Binding FenixSetupSeatText}" />
+                                    <TextBlock Classes="A320Subtle"
+                                               Text="{Binding FenixSetupJoystickText}" />
+                                    <Button Classes="Secondary"
+                                            HorizontalAlignment="Left"
+                                            Content="{Binding FenixSetupDismissText}"
+                                            Command="{Binding DismissFenixSetupChecklistCommand}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="A320Inset">
+                                <StackPanel Spacing="12">
+                                    <TextBlock Classes="A320SectionTitle"
+                                               Text="Capture setup" />
+                                    <TextBlock Classes="A320Subtle"
+                                               Text="{Binding FenixSidestickActivationText}" />
+
+                                    <Grid ColumnDefinitions="*,*"
+                                          ColumnSpacing="14">
+                                        <StackPanel Grid.Column="0"
+                                                    Spacing="10">
+                                            <TextBlock Classes="Note"
+                                                       Text="Local joystick device" />
+                                            <ComboBox ItemsSource="{Binding FenixJoystickDevices}"
+                                                      SelectedIndex="{Binding FenixControllerIndex}" />
+
+                                            <TextBlock Classes="Note"
+                                                       Text="Takeover / priority source" />
+                                            <ComboBox ItemsSource="{Binding FenixTakeoverButtons}"
+                                                      SelectedIndex="{Binding FenixTakeoverButtonSelectionIndex}" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1"
+                                                    Spacing="8">
+                                            <TextBlock Classes="Note"
+                                                       Text="{Binding FenixJoystickStatus}" />
+                                            <TextBlock Classes="Note"
+                                                       Text="{Binding FenixJoystickPreview}" />
+                                            <TextBlock Classes="Note"
+                                                       Text="{Binding FenixTakeoverButtonStatus}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Classes="Note"
+                                                       Text="{Binding FenixRuntimeStatus}"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <StackPanel Spacing="6">
+                                        <CheckBox IsChecked="{Binding FenixDynamicAuthorityEnabled}"
+                                                  IsEnabled="{Binding FenixDynamicAuthorityEditable}"
+                                                  Content="Dynamic sidestick authority" />
+                                        <TextBlock Classes="A320Subtle"
+                                                   Text="{Binding FenixDynamicAuthorityText}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="A320Inset">
+                                <StackPanel Spacing="12">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Left"
+                                                   Classes="A320SectionTitle"
+                                                   Text="Roll Axis" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Classes="A320Subtle"
+                                                   Text="Joystick L-Axis X" />
+                                    </DockPanel>
+                                    <TextBlock Classes="A320Subtle"
+                                               Text="The live point follows the selected joystick input, like the MSFS sensitivity screen." />
+
+                                    <Border Classes="CurveGraphShell"
+                                            Width="220"
+                                            Height="220"
+                                            HorizontalAlignment="Center">
+                                        <Canvas Width="220"
+                                                Height="220">
+                                            <Rectangle Width="220"
+                                                       Height="220"
+                                                       Fill="#2b313b" />
+                                            <Line StartPoint="110,0"
+                                                  EndPoint="110,220"
+                                                  Stroke="#59616d"
+                                                  StrokeThickness="1" />
+                                            <Line StartPoint="0,110"
+                                                  EndPoint="220,110"
+                                                  Stroke="#59616d"
+                                                  StrokeThickness="1" />
+                                            <Line StartPoint="0,220"
+                                                  EndPoint="220,0"
+                                                  Stroke="#6f8fb3"
+                                                  StrokeThickness="1.5"
+                                                  Opacity="0.28" />
+                                            <Polyline Points="{Binding FenixRollCurvePoints}"
+                                                      Stroke="#7dd3fc"
+                                                      StrokeThickness="3" />
+                                            <Ellipse Width="14"
+                                                     Height="14"
+                                                     Fill="#BFE8F7FF"
+                                                     Canvas.Left="{Binding FenixRollMarkerLeft}"
+                                                     Canvas.Top="{Binding FenixRollMarkerTop}" />
+                                        </Canvas>
+                                    </Border>
+
+                                    <Grid ColumnDefinitions="96,*,54,58"
+                                          ColumnSpacing="10">
+                                        <TextBlock Classes="CurveMetricLabel"
+                                                   Text="Sensitivity" />
+                                        <Slider Grid.Column="1"
+                                                Classes="A320CurveSlider"
+                                                Minimum="0.25"
+                                                Maximum="2.00"
+                                                TickFrequency="0.05"
+                                                Value="{Binding FenixRollSensitivity}" />
+                                        <Border Grid.Column="2"
+                                                Classes="CurveValueBadge">
+                                            <TextBlock Classes="CurveValueBadge"
+                                                       Text="{Binding FenixRollSensitivity, StringFormat={}{0:0.00}}" />
+                                        </Border>
+                                        <Button Grid.Column="3"
+                                                Classes="CurveReset"
+                                                Content="Reset"
+                                                Command="{Binding ResetFenixAxisSettingCommand}"
+                                                CommandParameter="roll-sensitivity" />
+                                    </Grid>
+
+                                    <Grid ColumnDefinitions="96,*,54,58"
+                                          ColumnSpacing="10">
+                                        <TextBlock Classes="CurveMetricLabel"
+                                                   Text="Curve" />
+                                        <Slider Grid.Column="1"
+                                                Classes="A320CurveSlider"
+                                                Minimum="0"
+                                                Maximum="1.00"
+                                                TickFrequency="0.05"
+                                                Value="{Binding FenixRollExpo}" />
+                                        <Border Grid.Column="2"
+                                                Classes="CurveValueBadge">
+                                            <TextBlock Classes="CurveValueBadge"
+                                                       Text="{Binding FenixRollExpo, StringFormat={}{0:0.00}}" />
+                                        </Border>
+                                        <Button Grid.Column="3"
+                                                Classes="CurveReset"
+                                                Content="Reset"
+                                                Command="{Binding ResetFenixAxisSettingCommand}"
+                                                CommandParameter="roll-curve" />
+                                    </Grid>
+
+                                    <Grid ColumnDefinitions="96,*,54,58"
+                                          ColumnSpacing="10">
+                                        <TextBlock Classes="CurveMetricLabel"
+                                                   Text="Dead zone" />
+                                        <Slider Grid.Column="1"
+                                                Classes="A320CurveSlider"
+                                                Minimum="0"
+                                                Maximum="0.20"
+                                                TickFrequency="0.01"
+                                                Value="{Binding FenixRollDeadzone}" />
+                                        <Border Grid.Column="2"
+                                                Classes="CurveValueBadge">
+                                            <TextBlock Classes="CurveValueBadge"
+                                                       Text="{Binding FenixRollDeadzone, StringFormat={}{0:0.00}}" />
+                                        </Border>
+                                        <Button Grid.Column="3"
+                                                Classes="CurveReset"
+                                                Content="Reset"
+                                                Command="{Binding ResetFenixAxisSettingCommand}"
+                                                CommandParameter="roll-deadzone" />
+                                    </Grid>
+
+                                    <CheckBox IsChecked="{Binding FenixInvertRoll}"
+                                              Content="Invert roll direction" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="A320Inset">
+                                <StackPanel Spacing="12">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Left"
+                                                   Classes="A320SectionTitle"
+                                                   Text="Pitch Axis" />
+                                        <TextBlock DockPanel.Dock="Right"
+                                                   Classes="A320Subtle"
+                                                   Text="Joystick L-Axis Y" />
+                                    </DockPanel>
+                                    <TextBlock Classes="A320Subtle"
+                                               Text="The live point follows the selected joystick input, like the MSFS sensitivity screen." />
+
+                                    <Border Classes="CurveGraphShell"
+                                            Width="220"
+                                            Height="220"
+                                            HorizontalAlignment="Center">
+                                        <Canvas Width="220"
+                                                Height="220">
+                                            <Rectangle Width="220"
+                                                       Height="220"
+                                                       Fill="#2b313b" />
+                                            <Line StartPoint="110,0"
+                                                  EndPoint="110,220"
+                                                  Stroke="#59616d"
+                                                  StrokeThickness="1" />
+                                            <Line StartPoint="0,110"
+                                                  EndPoint="220,110"
+                                                  Stroke="#59616d"
+                                                  StrokeThickness="1" />
+                                            <Line StartPoint="0,220"
+                                                  EndPoint="220,0"
+                                                  Stroke="#6f8fb3"
+                                                  StrokeThickness="1.5"
+                                                  Opacity="0.28" />
+                                            <Polyline Points="{Binding FenixPitchCurvePoints}"
+                                                      Stroke="#7dd3fc"
+                                                      StrokeThickness="3" />
+                                            <Ellipse Width="14"
+                                                     Height="14"
+                                                     Fill="#BFE8F7FF"
+                                                     Canvas.Left="{Binding FenixPitchMarkerLeft}"
+                                                     Canvas.Top="{Binding FenixPitchMarkerTop}" />
+                                        </Canvas>
+                                    </Border>
+
+                                    <Grid ColumnDefinitions="96,*,54,58"
+                                          ColumnSpacing="10">
+                                        <TextBlock Classes="CurveMetricLabel"
+                                                   Text="Sensitivity" />
+                                        <Slider Grid.Column="1"
+                                                Classes="A320CurveSlider"
+                                                Minimum="0.25"
+                                                Maximum="2.00"
+                                                TickFrequency="0.05"
+                                                Value="{Binding FenixPitchSensitivity}" />
+                                        <Border Grid.Column="2"
+                                                Classes="CurveValueBadge">
+                                            <TextBlock Classes="CurveValueBadge"
+                                                       Text="{Binding FenixPitchSensitivity, StringFormat={}{0:0.00}}" />
+                                        </Border>
+                                        <Button Grid.Column="3"
+                                                Classes="CurveReset"
+                                                Content="Reset"
+                                                Command="{Binding ResetFenixAxisSettingCommand}"
+                                                CommandParameter="pitch-sensitivity" />
+                                    </Grid>
+
+                                    <Grid ColumnDefinitions="96,*,54,58"
+                                          ColumnSpacing="10">
+                                        <TextBlock Classes="CurveMetricLabel"
+                                                   Text="Curve" />
+                                        <Slider Grid.Column="1"
+                                                Classes="A320CurveSlider"
+                                                Minimum="0"
+                                                Maximum="1.00"
+                                                TickFrequency="0.05"
+                                                Value="{Binding FenixPitchExpo}" />
+                                        <Border Grid.Column="2"
+                                                Classes="CurveValueBadge">
+                                            <TextBlock Classes="CurveValueBadge"
+                                                       Text="{Binding FenixPitchExpo, StringFormat={}{0:0.00}}" />
+                                        </Border>
+                                        <Button Grid.Column="3"
+                                                Classes="CurveReset"
+                                                Content="Reset"
+                                                Command="{Binding ResetFenixAxisSettingCommand}"
+                                                CommandParameter="pitch-curve" />
+                                    </Grid>
+
+                                    <Grid ColumnDefinitions="96,*,54,58"
+                                          ColumnSpacing="10">
+                                        <TextBlock Classes="CurveMetricLabel"
+                                                   Text="Dead zone" />
+                                        <Slider Grid.Column="1"
+                                                Classes="A320CurveSlider"
+                                                Minimum="0"
+                                                Maximum="0.20"
+                                                TickFrequency="0.01"
+                                                Value="{Binding FenixPitchDeadzone}" />
+                                        <Border Grid.Column="2"
+                                                Classes="CurveValueBadge">
+                                            <TextBlock Classes="CurveValueBadge"
+                                                       Text="{Binding FenixPitchDeadzone, StringFormat={}{0:0.00}}" />
+                                        </Border>
+                                        <Button Grid.Column="3"
+                                                Classes="CurveReset"
+                                                Content="Reset"
+                                                Command="{Binding ResetFenixAxisSettingCommand}"
+                                                CommandParameter="pitch-deadzone" />
+                                    </Grid>
+
+                                    <CheckBox IsChecked="{Binding FenixInvertPitch}"
+                                              Content="Invert pitch direction" />
+                                </StackPanel>
+                            </Border>
+                            </StackPanel>
+
+                            <Border IsVisible="{Binding FenixFloatingConsentVisible}"
+                                    Background="#CC090C14">
+                                <Border Classes="A320Inset"
+                                        MaxWidth="360"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Top"
+                                        Margin="20">
+                                    <StackPanel Spacing="12">
+                                        <TextBlock Classes="CardTitle"
+                                                   Text="{Binding FenixConsentTitle}" />
+                                        <TextBlock Classes="A320Subtle"
+                                                   Text="{Binding FenixConsentBody}" />
+                                        <TextBlock Classes="A320Subtle"
+                                                   Text="First setup reminder: set the Fenix EFB control side correctly on each client and pick the correct local joystick here before you fly." />
+                                        <Button Classes="PrimaryWide"
+                                                HorizontalAlignment="Stretch"
+                                                Command="{Binding EnableFenixSidestickProfileCommand}"
+                                                Content="{Binding FenixConsentButtonText}" />
+                                    </StackPanel>
+                                </Border>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Panel>
+
+                <StackPanel Grid.Row="3" Spacing="10">
+                    <Border IsVisible="{Binding NewProfileAvailable}"
+                            Classes="Card Badge Info">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right"
+                                    Classes="Link"
+                                    Content="Download"
+                                    Command="{Binding DownloadProfileCommand}" />
+                            <TextBlock>New profile available</TextBlock>
+                        </DockPanel>
+                    </Border>
+
+                    <Border IsVisible="{Binding ErrorMessage, Converter={StaticResource Empty}}"
+                            Classes="Card Badge Success">
+                        <TextBlock Text="FS Copilot is ready to use. Have a nice flight." />
+                    </Border>
+
+                    <Border IsVisible="{Binding ErrorMessage, Converter={StaticResource NotEmpty}}"
+                            Classes="Card Badge Error">
+                        <TextBlock Text="{Binding ErrorMessage}" />
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+
+    </Panel>
+</Window>
